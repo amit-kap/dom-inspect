@@ -3,7 +3,7 @@
   "name": "DOM Inspect",
   "version": "0.1.0",
   "description": "Inspect any DOM element — see CSS properties, and source file location when available",
-  "permissions": ["storage"],
+  "permissions": ["storage", "activeTab", "tabs"],
   "background": {
     "service_worker": "background.js"
   },
