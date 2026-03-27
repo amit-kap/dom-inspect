@@ -66,8 +66,19 @@ export function getOverlayScript(): string {
     display: 'none',
     whiteSpace: 'normal',
     wordBreak: 'break-word',
+    direction: 'ltr',
+    textAlign: 'left',
   });
   document.body.appendChild(tooltip);
+
+  // Prevent scroll from leaking out of tooltip to the page
+  tooltip.addEventListener('wheel', function(e) {
+    var atTop = tooltip.scrollTop === 0;
+    var atBottom = tooltip.scrollTop + tooltip.clientHeight >= tooltip.scrollHeight;
+    if ((e.deltaY < 0 && atTop) || (e.deltaY > 0 && atBottom)) {
+      e.preventDefault();
+    }
+  }, { passive: false });
 
   // ── Hierarchy: walk up the DOM collecting elements with data-source ──
   function getSourceHierarchy(el) {
@@ -220,6 +231,7 @@ export function getOverlayScript(): string {
         'gap', 'row-gap', 'column-gap',
         'top', 'right', 'bottom', 'left', 'inset', 'z-index',
         'overflow',
+        'font-family', 'font-size', 'font-weight', 'line-height', 'letter-spacing',
         'border-width', 'border-radius', 'border-color',
         'color', 'background-color', 'opacity',
       ];
@@ -301,10 +313,16 @@ export function getOverlayScript(): string {
       }
 
       const rows = [];
+      const hasBorder = getComputedVal('border-width') !== '0px' && getComputedVal('border-width') !== '0px 0px 0px 0px';
       for (const prop of DISPLAY_PROPS) {
         const val = getComputedVal(prop);
         const isDefault = !val || val === DEFAULTS[prop] || val === '0px' || val === '0px 0px' || val === '0px 0px 0px 0px';
         if (isDefault) continue;
+
+        // Skip border-color when there's no visible border
+        if (prop === 'border-color' && !hasBorder) continue;
+        // Skip background-color when transparent (inherited/not set)
+        if (prop === 'background-color' && (val === 'rgba(0, 0, 0, 0)' || val === 'transparent')) continue;
 
         const isClr = COLOR_PROPS.has(prop) || prop === 'border-color';
         const tw = twMap[prop];
@@ -331,6 +349,44 @@ export function getOverlayScript(): string {
           + twClasses
           + '</div>'
         );
+      }
+
+      // Layout summary line
+      var summary = [];
+      var disp = computed.getPropertyValue('display');
+      var pos = computed.getPropertyValue('position');
+      if (pos !== 'static') summary.push(pos);
+      if (disp === 'flex' || disp === 'inline-flex') {
+        var dir = computed.getPropertyValue('flex-direction');
+        summary.push(disp === 'inline-flex' ? 'inline-flex' : 'flex');
+        if (dir === 'column' || dir === 'column-reverse') summary.push(dir);
+        var jc = computed.getPropertyValue('justify-content');
+        var ai = computed.getPropertyValue('align-items');
+        if (jc !== 'normal' && jc !== 'flex-start') summary.push('justify: ' + jc);
+        if (ai !== 'normal' && ai !== 'stretch') summary.push('align: ' + ai);
+      } else if (disp === 'grid' || disp === 'inline-grid') {
+        summary.push(disp);
+      } else if (disp !== 'block') {
+        summary.push(disp);
+      }
+      var w = computed.getPropertyValue('width');
+      var h = computed.getPropertyValue('height');
+      if (w && h) summary.push(parseInt(w) + ' \\u00d7 ' + parseInt(h));
+      var pt = parseInt(computed.getPropertyValue('padding-top')) || 0;
+      var pr = parseInt(computed.getPropertyValue('padding-right')) || 0;
+      var pb = parseInt(computed.getPropertyValue('padding-bottom')) || 0;
+      var pl = parseInt(computed.getPropertyValue('padding-left')) || 0;
+      if (pt || pr || pb || pl) {
+        if (pt === pb && pl === pr && pt === pl) summary.push('p: ' + pt);
+        else if (pt === pb && pl === pr) summary.push('py: ' + pt + ' px: ' + pl);
+        else summary.push('p: ' + pt + ' ' + pr + ' ' + pb + ' ' + pl);
+      }
+      var gapVal = computed.getPropertyValue('gap');
+      if (gapVal && gapVal !== 'normal' && gapVal !== '0px') summary.push('gap: ' + parseInt(gapVal));
+
+      if (summary.length > 0) {
+        html += '<div style="border-top:1px solid #313244;margin-top:4px;padding-top:4px;color:#89b4fa;font-size:11px">'
+          + summary.join(' \\u00b7 ') + '</div>';
       }
 
       html += '<div style="border-top:1px solid #313244;margin-top:4px;padding-top:4px">';
@@ -376,10 +432,12 @@ export function getOverlayScript(): string {
   function flashGreen() {
     highlight.style.background = 'rgba(34, 197, 94, 0.25)';
     highlight.style.borderColor = 'rgba(34, 197, 94, 0.8)';
+    tooltip.innerHTML = '<div style="color:#22c55e;font-weight:600">\\u2713 Copied</div>';
+    tooltip.style.display = 'block';
     setTimeout(function() {
       highlight.style.background = 'rgba(59, 130, 246, 0.15)';
       highlight.style.borderColor = 'rgba(59, 130, 246, 0.8)';
-    }, 300);
+    }, 600);
   }
 
   // ── Event handlers ─────────────────────────────────────────────────
@@ -465,9 +523,14 @@ export function getOverlayScript(): string {
     updateDisplay();
   }, true);
 
-  // Navigate hierarchy with scroll wheel
+  // Navigate hierarchy with scroll wheel, or scroll tooltip when pinned
   document.addEventListener('wheel', function(e) {
     if (!altDown || hierarchy.length === 0) return;
+    if (frozen) {
+      // Block page scroll, but allow tooltip to scroll
+      if (!tooltip.contains(e.target)) e.preventDefault();
+      return;
+    }
     e.preventDefault();
     if (e.deltaY > 0) {
       hierarchyIndex = Math.min(hierarchyIndex + 1, hierarchy.length - 1);

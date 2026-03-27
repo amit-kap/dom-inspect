@@ -1,6 +1,6 @@
 {
   "name": "dom-inspect",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Point at any DOM element in the browser and get the source file and line number",
   "type": "module",
   "main": "./dist/index.js",
